@@ -1,0 +1,16 @@
+name: Manter o vigia ativo
+# O GitHub desliga agendamentos de repositório público sem commits por 60 dias; um commit vazio por mês evita isso.
+on:
+  schedule:
+    - cron: "0 12 1 * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name "vigia"; git config user.email "vigia@users.noreply.github.com"
+          git commit --allow-empty -m "chore: mantém o agendamento ativo" && git push

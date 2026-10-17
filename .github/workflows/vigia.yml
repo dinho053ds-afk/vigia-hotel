@@ -1,0 +1,55 @@
+name: Vigia do servidor do hotel
+# Confere de fora (GitHub) se o n8n e o WhatsApp do servidor respondem e avisa no Telegram quando cai e quando volta.
+# Endereços e chaves ficam só nos segredos do repositório (ALVOS, TELEGRAM_TOKEN, TELEGRAM_CHAT).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      teste:
+        description: "Mandar mensagem de teste no Telegram"
+        type: boolean
+        default: false
+concurrency: vigia
+jobs:
+  conferir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Estado anterior
+        uses: actions/cache/restore@v4
+        with:
+          path: estado.txt
+          key: estado-${{ github.run_id }}
+          restore-keys: estado-
+      - name: Conferir
+        env:
+          ALVOS: ${{ secrets.ALVOS }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
+          TESTE: ${{ inputs.teste }}
+        run: |
+          set -u
+          avisar() { curl -s -m 20 -o /dev/null "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=${TELEGRAM_CHAT}" --data-urlencode "text=$1" || true; }
+          # cada linha de ALVOS: nome|url  (fora = sem resposta ou erro 5xx; 401/404 contam como de pé)
+          checar() { c=$(curl -s -m 20 -o /dev/null -w "%{http_code}" "$1" || true); [ -n "$c" ] && [ "$c" != "000" ] && [ "$c" -lt 500 ]; }
+          fora=""
+          while IFS='|' read -r nome url; do
+            [ -z "${url:-}" ] && continue
+            checar "$url" || { sleep 60; checar "$url" || fora="$fora $nome"; }
+          done <<< "$ALVOS"
+          antes=$(cat estado.txt 2>/dev/null || echo ok)
+          agora=$([ -n "$fora" ] && echo "fora:$fora" || echo ok)
+          hora=$(TZ=America/Sao_Paulo date '+%d/%m %H:%M')
+          if [ "$agora" != "$antes" ]; then
+            if [ "$agora" = ok ]; then avisar "✅ Servidor do hotel voltou ($hora)."
+            else avisar "🚨 Servidor do hotel fora do ar ($hora):$fora. Mensagens do WhatsApp e robôs parados até voltar."; fi
+          fi
+          [ "${TESTE:-false}" = true ] && avisar "🔎 Vigia do servidor ligado. Agora: ${agora} ($hora)."
+          echo "$agora" > estado.txt
+          echo "antes=$antes agora=$agora"
+      - name: Guardar estado
+        uses: actions/cache/save@v4
+        with:
+          path: estado.txt
+          key: estado-${{ github.run_id }}
