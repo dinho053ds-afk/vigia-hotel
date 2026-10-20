@@ -14,12 +14,14 @@ concurrency: vigia
 jobs:
   conferir:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Estado anterior
         uses: actions/cache/restore@v4
         with:
-          path: estado.txt
+          path: |
+            estado.txt
+            saude.txt
           key: estado-${{ github.run_id }}
           restore-keys: estado-
       - name: Conferir
@@ -48,8 +50,26 @@ jobs:
           [ "${TESTE:-false}" = true ] && avisar "🔎 Vigia do servidor ligado. Agora: ${agora} ($hora)."
           echo "$agora" > estado.txt
           echo "antes=$antes agora=$agora"
+
+          # Plataforma financeira: a cada 15 min, as telas principais carregam com os dados de verdade e em tempo? (/api/saude)
+          # Pública e sem dados do hotel; avisa quando passa a falhar e quando volta.
+          if [ $(( 10#$(date -u +%M) % 15 )) -lt 5 ] || [ "${TESTE:-false}" = true ]; then
+            telas_ruins() { curl -s -m 90 -o saude.json -w "%{http_code}" https://hotel-financeiro.vercel.app/api/saude || true; }
+            code=$(telas_ruins); [ "$code" = 200 ] || { sleep 60; code=$(telas_ruins); }
+            if [ "$code" = 200 ]; then s_agora=ok
+            else s_agora="falha:$(jq -r '[.telas[]? | select(.ok | not) | "\(.tela) (\(.erro // "erro"))"] | join("; ")' saude.json 2>/dev/null | grep . || echo "sem resposta (HTTP $code)")"; fi
+            s_antes=$(cat saude.txt 2>/dev/null || echo ok)
+            if [ "$s_agora" != "$s_antes" ]; then
+              if [ "$s_agora" = ok ]; then avisar "✅ Plataforma financeira: as telas voltaram ao normal ($hora)."
+              else avisar "🚨 Plataforma financeira com problema ($hora): ${s_agora#falha:}. Abra o Claude e peça a correção (a tela pode estar travando ou com erro)."; fi
+            fi
+            echo "$s_agora" > saude.txt
+            echo "saude antes=$s_antes agora=$s_agora"
+          fi
       - name: Guardar estado
         uses: actions/cache/save@v4
         with:
-          path: estado.txt
+          path: |
+            estado.txt
+            saude.txt
           key: estado-${{ github.run_id }}
